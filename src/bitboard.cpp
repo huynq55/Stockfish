@@ -92,7 +92,7 @@ void Bitboards::init() {
   init_magics(ROOK, RookTable, RookMagics);
   init_magics(BISHOP, BishopTable, BishopMagics);
 
-  for (Square s1 = SQ_A1; s1 <= SQ_H8; ++s1)
+  for (Square s1 = SQ_A1; s1 <= SQ_I0; ++s1)
   {
       PawnAttacks[WHITE][s1] = pawn_attacks_bb<WHITE>(square_bb(s1));
       PawnAttacks[BLACK][s1] = pawn_attacks_bb<BLACK>(square_bb(s1));

@@ -82,7 +82,7 @@ std::ostream& operator<<(std::ostream& os, const Position& pos) {
       ASSERT_ALIGNED(&st, Eval::NNUE::CacheLineSize);
 
       Position p;
-      p.set(pos.fen(), pos.is_chess960(), &st, pos.this_thread());
+      p.set(pos.fen(), &st, pos.this_thread());
       Tablebases::ProbeState s1, s2;
       Tablebases::WDLScore wdl = Tablebases::probe_wdl(p, &s1);
       int dtz = Tablebases::probe_dtz(p, &s2);
@@ -156,7 +156,7 @@ void Position::init() {
 /// This function is not very robust - make sure that input FENs are correct,
 /// this is assumed to be the responsibility of the GUI.
 
-Position& Position::set(const string& fenStr, bool isChess960, StateInfo* si, Thread* th) {
+Position& Position::set(const string& fenStr, StateInfo* si, Thread* th) {
 /*
    A FEN string defines a particular position using only the ASCII character set.
 
@@ -173,22 +173,11 @@ Position& Position::set(const string& fenStr, bool isChess960, StateInfo* si, Th
 
    2) Active color. "w" means white moves next, "b" means black.
 
-   3) Castling availability. If neither side can castle, this is "-". Otherwise,
-      this has one or more letters: "K" (White can castle kingside), "Q" (White
-      can castle queenside), "k" (Black can castle kingside), and/or "q" (Black
-      can castle queenside).
-
-   4) En passant target square (in algebraic notation). If there's no en passant
-      target square, this is "-". If a pawn has just made a 2-square move, this
-      is the position "behind" the pawn. Following X-FEN standard, this is recorded only
-      if there is a pawn in position to make an en passant capture, and if there really
-      is a pawn that might have advanced two squares.
-
-   5) Halfmove clock. This is the number of halfmoves since the last pawn advance
+   3) Halfmove clock. This is the number of halfmoves since the last pawn advance
       or capture. This is used to determine if a draw can be claimed under the
       fifty-move rule.
 
-   6) Fullmove number. The number of the full move. It starts at 1, and is
+   4) Fullmove number. The number of the full move. It starts at 1, and is
       incremented after Black's move.
 */
 
@@ -279,7 +268,6 @@ Position& Position::set(const string& fenStr, bool isChess960, StateInfo* si, Th
   // handle also common incorrect FEN with fullmove = 0.
   gamePly = std::max(2 * (gamePly - 1), 0) + (sideToMove == BLACK);
 
-  chess960 = isChess960;
   thisThread = th;
   set_state(st);
 
@@ -388,7 +376,7 @@ Position& Position::set(const string& code, Color c, StateInfo* si) {
   string fenStr = "8/" + sides[0] + char(8 - sides[0].length() + '0') + "/8/8/8/8/"
                        + sides[1] + char(8 - sides[1].length() + '0') + "/8 w - - 0 10";
 
-  return set(fenStr, false, si, nullptr);
+  return set(fenStr, si, nullptr);
 }
 
 
@@ -420,17 +408,7 @@ string Position::fen() const {
 
   ss << (sideToMove == WHITE ? " w " : " b ");
 
-  if (can_castle(WHITE_OO))
-      ss << (chess960 ? char('A' + file_of(castling_rook_square(WHITE_OO ))) : 'K');
-
-  if (can_castle(WHITE_OOO))
-      ss << (chess960 ? char('A' + file_of(castling_rook_square(WHITE_OOO))) : 'Q');
-
-  if (can_castle(BLACK_OO))
-      ss << (chess960 ? char('a' + file_of(castling_rook_square(BLACK_OO ))) : 'k');
-
-  if (can_castle(BLACK_OOO))
-      ss << (chess960 ? char('a' + file_of(castling_rook_square(BLACK_OOO))) : 'q');
+  ss << '-';
 
   if (!can_castle(ANY_CASTLING))
       ss << '-';
@@ -502,42 +480,6 @@ bool Position::legal(Move m) const {
   assert(color_of(moved_piece(m)) == us);
   assert(piece_on(square<KING>(us)) == make_piece(us, KING));
 
-  // En passant captures are a tricky special case. Because they are rather
-  // uncommon, we do it simply by testing whether the king is attacked after
-  // the move is made.
-  if (type_of(m) == EN_PASSANT)
-  {
-      Square ksq = square<KING>(us);
-      Square capsq = to - pawn_push(us);
-      Bitboard occupied = (pieces() ^ from ^ capsq) | to;
-
-      assert(to == ep_square());
-      assert(moved_piece(m) == make_piece(us, PAWN));
-      assert(piece_on(capsq) == make_piece(~us, PAWN));
-      assert(piece_on(to) == NO_PIECE);
-
-      return   !(attacks_bb<  ROOK>(ksq, occupied) & pieces(~us, QUEEN, ROOK))
-            && !(attacks_bb<BISHOP>(ksq, occupied) & pieces(~us, QUEEN, BISHOP));
-  }
-
-  // Castling moves generation does not check if the castling path is clear of
-  // enemy attacks, it is delayed at a later time: now!
-  if (type_of(m) == CASTLING)
-  {
-      // After castling, the rook and king final positions are the same in
-      // Chess960 as they would be in standard chess.
-      to = relative_square(us, to > from ? SQ_G1 : SQ_C1);
-      Direction step = to > from ? WEST : EAST;
-
-      for (Square s = to; s != from; s += step)
-          if (attackers_to(s) & pieces(~us))
-              return false;
-
-      // In case of Chess960, verify if the Rook blocks some checks
-      // For instance an enemy queen in SQ_A1 when castling rook is in SQ_B1.
-      return !chess960 || !(blockers_for_king(us) & to_sq(m));
-  }
-
   // If the moving piece is a king, check whether the destination square is
   // attacked by the opponent.
   if (type_of(piece_on(from)) == KING)
@@ -561,15 +503,6 @@ bool Position::pseudo_legal(const Move m) const {
   Square to = to_sq(m);
   Piece pc = moved_piece(m);
 
-  // Use a slower but simpler function for uncommon cases
-  // yet we skip the legality check of MoveList<LEGAL>().
-  if (type_of(m) != NORMAL)
-      return checkers() ? MoveList<    EVASIONS>(*this).contains(m)
-                        : MoveList<NON_EVASIONS>(*this).contains(m);
-
-  // Is not a promotion, so promotion piece must be empty
-  if (promotion_type(m) - KNIGHT != NO_PIECE_TYPE)
-      return false;
 
   // If the 'from' square is not occupied by a piece belonging to the side to
   // move, the move is obviously not legal.
@@ -583,11 +516,6 @@ bool Position::pseudo_legal(const Move m) const {
   // Handle the special case of a pawn move
   if (type_of(pc) == PAWN)
   {
-      // We have already handled promotion moves, so destination
-      // cannot be on the 8th/1st rank.
-      if ((Rank8BB | Rank1BB) & to)
-          return false;
-
       if (   !(pawn_attacks_bb(us, from) & pieces(~us) & to) // Not a capture
           && !((from + pawn_push(us) == to) && empty(to))       // Not a single push
           && !(   (from + 2 * pawn_push(us) == to)              // Not a double push
@@ -1278,7 +1206,7 @@ void Position::flip() {
   std::getline(ss, token); // Half and full moves
   f += token;
 
-  set(f, is_chess960(), st, this_thread());
+  set(f, st, this_thread());
 
   assert(pos_is_ok());
 }

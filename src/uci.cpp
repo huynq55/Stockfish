@@ -68,7 +68,7 @@ namespace {
         return;
 
     states = StateListPtr(new std::deque<StateInfo>(1)); // Drop the old state and create a new one
-    pos.set(fen, Options["UCI_Chess960"], &states->back(), Threads.main());
+    pos.set(fen, &states->back(), Threads.main());
 
     // Parse the move list, if any
     while (is >> token && (m = UCI::to_move(pos, token)) != MOVE_NONE)

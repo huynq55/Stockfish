@@ -175,8 +175,14 @@ constexpr Bitboard shift(Bitboard b) {
 
 template<Color C>
 constexpr Bitboard pawn_attacks_bb(Bitboard b) {
-  return C == WHITE ? shift<NORTH_WEST>(b) | shift<NORTH_EAST>(b)
-                    : shift<SOUTH_WEST>(b) | shift<SOUTH_EAST>(b);
+  // Pawn can always move forward
+  Bitboard attacks = shift<C == WHITE ? NORTH : SOUTH>(b);
+
+  // If pawn crosses the river, you can go horizontally
+  if ((C == WHITE && rank_of(s) > RANK_5) || (C == BLACK && rank_of(s) < RANK_6))
+    attacks |= shift<WEST>(b) | shift<EAST>(b);
+
+  return attacks;
 }
 
 inline Bitboard pawn_attacks_bb(Color c, Square s) {
